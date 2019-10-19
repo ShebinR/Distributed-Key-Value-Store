@@ -1,0 +1,24 @@
+K,6
+G,moon
+G,lake
+G,ten
+P,wish,life
+G,laugh
+P,paper,read
+S
+K,3
+G,sky
+G,wind
+G,lake
+G,moon
+P,night,cold
+P,winter,more winter
+S
+K,8
+G,night
+P,sun,light
+G,winter
+G,sun
+G,one
+G,success
+S
