@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+option java_package = "com.grpc.protocol";
+
+service keyvaluestore {
+    rpc get (GetRequest) returns (GetResponse);
+    rpc put (PutRequest) returns (PutResponse);
+    rpc propogatePut (PropogatePutRequest) returns (PutResponse);
+    rpc updateFromMaster (UpdateFromMasterRequest) returns (DefaultResponse);
+    rpc revertUpdate (RevertRequest) returns (DefaultResponse);
+    rpc changeMaster (ChangeMasterRequest) returns (DefaultResponse);
+    rpc acceptNewMasterRole (AcceptNewMasterRoleRequest) returns (DefaultResponse);
+
+    rpc whoIsMaster(EmptyRequest) returns(WhoIsMasterResponse);
+    rpc areYouMaster(EmptyRequest) returns(AreYouMasterResponse);
+    rpc getUpdatesAfterTS(FindUpdatesAfterTSRequest) returns(UpdatesAfterTSResponse);
+
+}
+
+message GetRequest {
+    string Key = 1 ;
+}
+
+message GetResponse {
+    string Value = 1;
+    int32 ResponseCode = 2;
+}
+
+message PropogatePutRequest {
+    string Key = 1;
+    string Value = 2;
+}
+
+message PutRequest {
+    string Key = 1;
+    string Value = 2;
+}
+
+message PutResponse {
+    string OldValue = 1;
+    int32 ResponseCode = 2;
+}
+
+message UpdateFromMasterRequest {
+    string Key = 1;
+    string Value = 2;
+    int64 TimeStamp = 3;
+}
+
+message RevertRequest {
+    string Key = 1;
+    string OldValue = 2;
+    bool isNew = 3;
+}
+
+message AcceptNewMasterRoleRequest {
+}
+
+message ChangeMasterRequest {
+    string Hostname = 1;
+    int32 Port = 2;
+    string ServerId = 3;
+}
+
+message DefaultResponse {
+    int32 ResponseCode = 1;
+}
+
+message EmptyRequest {
+}
+
+message WhoIsMasterResponse {
+    string ServerId = 1;
+    string HostName = 2;
+    int32 Port = 3;
+}
+
+message AreYouMasterResponse {
+    bool Response = 1;
+}
+
+message FindUpdatesAfterTSRequest {
+    string ServerId = 1;
+    int64 LastKnownTimeStamp = 2;
+}
+
+message UpdatesAfterTSResponse {
+    string Records = 1;
+    bool NoUpdates = 2;
+}
