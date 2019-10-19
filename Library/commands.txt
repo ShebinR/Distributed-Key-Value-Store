@@ -1,0 +1,4 @@
+g++ -c -Wall -Werror -fpic ClientLibrary.cc
+
+g++ -shared -o lib739kv.so ClientLibrary.o
+

@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+option java_package = "com.grpc.protocol";
+
+service keyvaluestore {
+    rpc get(GetRequest) returns(GetResponse);
+    rpc put(PutRequest) returns(PutResponse);
+}
+
+message GetRequest {
+    string Key = 1 ;
+}
+
+message GetResponse {
+    string Value = 1;
+    int32 ResponseCode = 2;
+}
+
+message PutRequest {
+    string Key = 1;
+    string Value = 2;
+    int32 fromMaster = 3;
+}
+
+message PutResponse{
+    string OldValue = 1;
+    int32 ResponseCode = 2;
+}

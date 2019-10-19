@@ -1,0 +1,365 @@
+diff --git a/Library/ClientServerInterface.cc b/Library/ClientServerInterface.cc
+index 4d130f2..278b7a6 100644
+--- a/Library/ClientServerInterface.cc
++++ b/Library/ClientServerInterface.cc
+@@ -1,6 +1,9 @@
+ #include <iostream>
+ #include <memory>
+ #include <string>
++#include <ctime>
++#include <chrono>
++#include <fstream>
+ 
+ #include <grpcpp/grpcpp.h>
+ #ifdef BAZEL_BUILD
+@@ -13,6 +16,9 @@ using grpc::Channel;
+ using grpc::ClientContext;
+ using grpc::Status;
+ 
++std::ofstream log_file;
++std::string log_file_name = "./log_";
++
+ class ClientServerInterface {
+     private:
+         std::unique_ptr<keyvaluestore::Stub> stub_;
+@@ -23,6 +29,8 @@ class ClientServerInterface {
+         ClientServerInterface(std::shared_ptr<Channel> channel, std::string);
+ 
+         bool checkConnectionState();
++        bool check_deadline_exceeded(Status s);
++        bool check_unavailable(Status s);
+         std::string get_endpoint_name();
+         int get_request(const std::string&, std::string&);
+         int put_request(const std::string&, const std::string&, std::string&);
+@@ -61,18 +69,44 @@ int ClientServerInterface::get_request(const std::string& key, std::string &valu
+     // the server and/or tweak certain RPC behaviors.
+     ClientContext context;
+ 
++    std::chrono::system_clock::time_point deadline = std::chrono::system_clock::now() +
++                          std::chrono::milliseconds(10000);
++    context.set_deadline(deadline);
++
+     Status status = stub_->get(&context, request, &response);
+     if (status.ok()) {
+         if(response.responsecode() == 0)
+             value = response.value();
+         return response.responsecode();
++    } else if(check_unavailable(status)) {
++//        std::cout << " L: Server Unavailable!" << std::endl;
++        log_file << " L: Server Unavailable!" << std::endl;
++        return -2;
++    } else if (check_deadline_exceeded(status)) {
++//        std::cout << " L: Deadline exceeded!" << std::endl;
++        log_file << " L: Deadline exceeded!" << std::endl;
++        return -1;
+     } else {
+-        std::cout << " L: " << status.error_code() << " : " << status.error_message()
+-            << std::endl;
++//        std::cout << " L: " << status.error_code() << " : " << status.error_message()
++//            << std::endl;
++        log_file << " L: " << status.error_code() << " : " << status.error_message()
++                  << std::endl;
+         return -1;
+     }
+ }
+ 
++bool ClientServerInterface::check_deadline_exceeded(Status s) {
++    if(s.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED)
++        return true;
++    return false;
++}
++
++bool ClientServerInterface::check_unavailable(Status s) {
++    if(s.error_code() == grpc::StatusCode::UNAVAILABLE)
++        return true;
++    return false;
++}
++
+ int ClientServerInterface::put_request(const std::string& key,
+         const std::string& value,
+         std::string& old_value) {
+@@ -84,14 +118,27 @@ int ClientServerInterface::put_request(const std::string& key,
+ 
+     PutResponse response;
+     ClientContext context;
++    std::chrono::system_clock::time_point deadline = std::chrono::system_clock::now() +
++                                                     std::chrono::milliseconds(5000);
++    context.set_deadline(deadline);
+ 
+     Status status = stub_->put(&context, request, &response);
+     if(status.ok()) {
+         old_value = response.oldvalue();
+         return response.responsecode();
++    } else if(check_unavailable(status)) {
++//        std::cout << " L: Server Unavailable!" << std::endl;
++        log_file << " L: Server Unavailable!" << std::endl;
++        return -2;
++    } else if (check_deadline_exceeded(status)) {
++//        std::cout << " L: Deadline exceeded!" << std::endl;
++        log_file << " L: Deadline exceeded!" << std::endl;
++        return -1;
+     } else {
+-        std::cout << " L: " << status.error_code() << " : " << status.error_message()
+-            << std::endl;
++//        std::cout << " L: " << status.error_code() << " : " << status.error_message()
++//            << std::endl;
++        log_file << " L: " << status.error_code() << " : " << status.error_message()
++                  << std::endl;
+         return -1;
+     }
+ }
+@@ -100,12 +147,20 @@ const int MAX_NUMBER_SERVERS = 10;
+ int number_of_server_connections = 0;
+ ClientServerInterface *connections[10];
+ int connect_index = 0;
++int log_file_created = 0;
++
++/* Util Function prototypes */
++bool is_connections_setup();
++void load_balancer();
++void list_connections();
++void create_log_file();
++
+ 
+ /* Util functions not exposed to the clients */
+ void list_connections() {
+-    std::cout << "  L: List of server endpoints" << std::endl;
++    std::cout << "L: List of server endpoints" << std::endl;
+     for(int i = 0; i < number_of_server_connections; i++) {
+-        std::cout << "    L : endpoint name : " << connections[i]->get_endpoint_name() << std::endl;
++        std::cout << "L : endpoint name : " << connections[i]->get_endpoint_name() << std::endl;
+     }
+ }
+ 
+@@ -116,6 +171,14 @@ void load_balancer() {
+ /* Implementations of functions exposed to the client */
+ /* Init Connection request from client */
+ int kv739_init(char ** server_list) {
++    create_log_file();
++    log_file.open(log_file_name, std::ofstream::app);
++    if(is_connections_setup()) {
++//        std::cout << " L: Connection already setup!" << std::endl;
++        log_file << "L: Connection already setup!" << std::endl;
++        log_file.close();
++        return -1;
++    }
+ 
+     int index = 0;
+ 
+@@ -127,7 +190,8 @@ int kv739_init(char ** server_list) {
+             break;
+ 
+         /* Init Server Connections */
+-        std::cout << "  L: Initializing connection for " << server_end_point << std::endl;
++//        std::cout << "  L: Initializing connection for " << server_end_point << std::endl;
++        log_file << "L: Initializing connection for " << server_end_point << std::endl;
+         connections[index] = new ClientServerInterface(
+                 grpc::CreateChannel(
+                         server_end_point,
+@@ -139,44 +203,82 @@ int kv739_init(char ** server_list) {
+     number_of_server_connections = index;
+ 
+     /* Check for any failure in connections */
+-    std::cout << "Checking connection state " << std::endl;
++//    std::cout << "Checking connection state " << std::endl;
+     for(int i = 0; i < number_of_server_connections; i++) {
+-        if(connections[i]->checkConnectionState())
++        if(connections[i]->checkConnectionState()) {
++            log_file.close();
+             return -1;
++        }
+     }
+     connect_index = 0;
+ 
++    log_file.close();
+     /* On Success */
+     return 0;
+ }
+ 
+ /* Get the value */
+ int kv739_get(char * key, char * value) {
++    create_log_file();
++    log_file.open(log_file_name, std::ofstream::app);
+ 
+-    std::cout << "  L: Sending GET request to endpoint "
+-        << connections[connect_index]->get_endpoint_name() << std::endl;
++    if(!is_connections_setup()) {
++//        std::cout << "L: No connections available!" << std::endl;
++        log_file << "L: No connections available!" << std::endl;
++        log_file.close();
++        return -1;
++    }
++//    std::cout << "  L: Sending GET request to endpoint "
++//        << connections[connect_index]->get_endpoint_name() << std::endl;
++    log_file << "L: Sending GET(" << key << ") request to endpoint"
++              << connections[connect_index]->get_endpoint_name() << std::endl;
+ 
+     /* Create Strings Key/Values */
+     std::string key_request(key);
+     std::string value_reply;
+ 
+-    /* Send request to server */
+-    int response_code = connections[connect_index]->get_request(key_request, value_reply);
++    int number_tries = 0;
++    int response_code = 0;
++    do {
++        /* Send request to server */
++        response_code = connections[connect_index]->get_request(key_request, value_reply);
+ 
+-    /* Balance load */
+-    load_balancer();
++        /* Balance load */
++        load_balancer();
++
++        /* If server is unavailable, retry on different server */
++        number_tries++;
++    } while(number_tries < number_of_server_connections && response_code == -2);
++
++    /* If all servers down */
++    if(number_tries == number_of_server_connections) {
++//        std::cout << "L: All servers down!" << std::endl;
++        log_file << "L: All servers down!" << std::endl;
++        log_file.close();
++        return -1;
++    }
+ 
+     /* On Success */
+     if(response_code == 0)
+         std::copy(value_reply.begin(), value_reply.end(), value);
+ 
++    log_file.close();
+     return response_code;
+ }
+ 
+ /* Put function which puts the given value for the key and return (if any) old value */
+ int kv739_put(char * key, char * value, char * old_value) {
+-
+-    std::cout << "  L: Sending PUT request to endpoint "
++    create_log_file();
++    log_file.open(log_file_name, std::ofstream::app);
++    if(!is_connections_setup()) {
++//        std::cout << " L: No connections available!" << std::endl;
++        log_file << "L: No connections available!" << std::endl;
++        log_file.close();
++        return -1;
++    }
++//    std::cout << "  L: Sending PUT request to endpoint "
++//              << connections[connect_index]->get_endpoint_name() << std::endl;
++    log_file << "L: Sending PUT(" << key << "," << value << ") request to endpoint "
+               << connections[connect_index]->get_endpoint_name() << std::endl;
+ 
+     /* Create Strings Key/Value/OldValue */
+@@ -184,22 +286,47 @@ int kv739_put(char * key, char * value, char * old_value) {
+     std::string value_req(value);
+     std::string old_value_req;
+ 
+-    /* Send Request to server */
+-    int response_code = connections[connect_index]->put_request(key_req, value_req, old_value_req);
+-
+-    /* Balance load */
+-    load_balancer();
++    int number_tries = 0;
++    int response_code = 0;
++    do {
++        /* Send Request to server */
++        response_code = connections[connect_index]->put_request(key_req, value_req, old_value_req);
++
++        /* Balance load */
++        load_balancer();
++
++        /* If server is unavailable, retry on different server */
++        number_tries++;
++    } while(number_tries < number_of_server_connections && response_code == -2);
++    /* If all servers down */
++    if(number_tries == number_of_server_connections) {
++//        std::cout << "L: All servers down!" << std::endl;
++        log_file << "L: All servers down!" << std::endl;
++        log_file.close();
++        return -1;
++    }
+ 
+     /* On Success */
+     if(response_code == 0)
+         std::copy(old_value_req.begin(), old_value_req.end(), old_value);
+ 
++    log_file.close();
+     return response_code;
+ }
+ 
+ /* Util Function to check the correctness of the Data */
+ int kv739_get_spec(char * key, char * value, int c_index) {
+-    std::cout << "  L: Sending GET request to endpoint "
++    create_log_file();
++    log_file.open(log_file_name, std::ofstream::app);
++    if(!is_connections_setup()) {
++//        std::cout << " L: No connections available!" << std::endl;
++        log_file << "L: No connections available!" << std::endl;
++        log_file.close();
++        return -1;
++    }
++//    std::cout << "  L: Sending GET request to endpoint "
++//              << connections[c_index]->get_endpoint_name() << std::endl;
++    log_file << "L: Sending GET request to endpoint "
+               << connections[c_index]->get_endpoint_name() << std::endl;
+ 
+     /* Create Strings Key/Values */
+@@ -216,28 +343,53 @@ int kv739_get_spec(char * key, char * value, int c_index) {
+     if(response_code == 0)
+         std::copy(value_reply.begin(), value_reply.end(), value);
+ 
++    log_file.close();
+     return response_code;
+ }
+ 
+ /* Shutdown any open connection */
+ int kv739_shutdown() {
+-
++    create_log_file();
++    log_file.open(log_file_name, std::ofstream::app);
+     /* No Server to shutdown */
+-    if(number_of_server_connections == 0) {
+-        std::cout << " L: No connection to shutdown " << std::endl;
++    if(!is_connections_setup()) {
++//        std::cout << " L: No connections available!" << std::endl;
++        log_file << "L: No connections available!" << std::endl;
++        log_file.close();
+         return -1;
+     }
+ 
+     /* Closing all currently open connections */
+     for(int i = 0; i < number_of_server_connections; i++) {
+-        std::cout << "  L: Clearing connection @ "
+-            << connections[i]->get_endpoint_name() << std::endl;
++//        std::cout << "  L: Clearing connection @ "
++//            << connections[i]->get_endpoint_name() << std::endl;
++        log_file << "L: Clearing connection @ "
++                  << connections[i]->get_endpoint_name() << std::endl;
+         delete(connections[i]);
+         connections[i] = NULL;
+     }
+     number_of_server_connections = 0;
+     connect_index = 0;
+ 
++    log_file.close();
+     return 0;
+ }
+ 
++bool is_connections_setup() {
++    std::cout << number_of_server_connections << std::endl;
++    if(number_of_server_connections == 0)
++        return false;
++    return true;
++}
++
++void create_log_file() {
++    if(log_file_created == 1)
++        return;
++    time_t t = std::time(0);
++    long int now = static_cast<long int> (t);
++    log_file_name = log_file_name + std::to_string(now);
++
++    log_file.open(log_file_name, std::ofstream::app);
++    log_file.close();
++    log_file_created = 1;
++}
+\ No newline at end of file
