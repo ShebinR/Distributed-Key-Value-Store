@@ -1,0 +1,3 @@
+g++ -L../Library/ -Wall -o Client Client.c -l739kv
+
+DYLD_LIBRARY_PATH=$(pwd)/../Library ./Client
